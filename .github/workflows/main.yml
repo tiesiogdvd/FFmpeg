@@ -19,24 +19,10 @@ jobs:
       with:
         fetch-depth: 1
         
-    - name: Set up JDK
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    - name: Cache NDK
-      id: cache-ndk
-      uses: actions/cache@v3
-      with:
-        path: ${ANDROID_SDK_ROOT}/ndk/${{ env.NDK_VERSION }}
-        key: ${{ runner.os }}-ndk-${{ env.NDK_VERSION }}
-
     - name: Install Android NDK
-      if: steps.cache-ndk.outputs.cache-hit != 'true'
       run: |
         echo "y" | sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
 
@@ -45,77 +31,63 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y pkg-config
 
-    - name: Debug Environment
+    - name: Configure and Build FFmpeg
       run: |
-        echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
-        echo "NDK_PATH: $ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}"
-        ls -la $ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/linux-x86_64/bin/
-        echo "PATH: $PATH"
-
-    - name: Configure FFmpeg
-      run: |
+        export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
         export NDK_PATH=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}
         export TOOLCHAIN=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64
         export PATH=$TOOLCHAIN/bin:$PATH
         export SYSROOT=$TOOLCHAIN/sysroot
         export PREFIX=$GITHUB_WORKSPACE/prebuilt/android-arm64/ffmpeg
+        export CC=$TOOLCHAIN/bin/aarch64-linux-android21-clang
+        export CXX=$TOOLCHAIN/bin/aarch64-linux-android21-clang++
+        export CROSS_PREFIX=aarch64-linux-android-
+        export AR=$TOOLCHAIN/bin/llvm-ar
+        export AS=$CC
+        export NM=$TOOLCHAIN/bin/llvm-nm
+        export STRIP=$TOOLCHAIN/bin/llvm-strip
+        export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
+        export LDFLAGS="-L$TOOLCHAIN/sysroot/usr/lib/aarch64-linux-android/21"
         
         mkdir -p $PREFIX
         
-        # Verify compiler exists
-        if [ ! -f "$TOOLCHAIN/bin/aarch64-linux-android21-clang" ]; then
-          echo "Compiler not found at $TOOLCHAIN/bin/aarch64-linux-android21-clang"
-          exit 1
-        fi
-        
         ./configure \
-          --cross-prefix=aarch64-linux-android- \
-          --sysroot=$SYSROOT \
           --prefix=$PREFIX \
-          --pkg-config=$(which pkg-config) \
-          --enable-version3 \
+          --cross-prefix=$CROSS_PREFIX \
+          --sysroot=$SYSROOT \
           --arch=aarch64 \
           --cpu=armv8-a \
+          --cc=$CC \
+          --cxx=$CXX \
+          --ar=$AR \
+          --ranlib=$RANLIB \
+          --strip=$STRIP \
+          --nm=$NM \
           --target-os=android \
-          --enable-neon \
-          --enable-asm \
-          --enable-inline-asm \
-          --ar=$TOOLCHAIN/bin/llvm-ar \
-          --cc=$TOOLCHAIN/bin/aarch64-linux-android21-clang \
-          --cxx=$TOOLCHAIN/bin/aarch64-linux-android21-clang++ \
-          --ranlib=$TOOLCHAIN/bin/llvm-ranlib \
-          --strip=$TOOLCHAIN/bin/llvm-strip \
-          --nm=$TOOLCHAIN/bin/llvm-nm \
-          --extra-libs="-L$GITHUB_WORKSPACE/prebuilt/android-arm64/cpu-features/lib -lndk_compat" \
-          --disable-autodetect \
           --enable-cross-compile \
-          --enable-pic \
-          --enable-jni \
-          --enable-optimizations \
-          --enable-swscale \
-          --disable-static \
           --enable-shared \
-          --enable-pthreads \
-          --enable-v4l2-m2m \
-          --disable-outdev=fbdev \
-          --disable-indev=fbdev \
+          --disable-static \
+          --disable-doc \
+          --disable-ffmpeg \
+          --disable-ffplay \
+          --disable-ffprobe \
+          --disable-avdevice \
+          --disable-devices \
+          --disable-indevs \
+          --disable-outdevs \
           --enable-small \
-          --disable-xmm-clobber-test \
+          --enable-jni \
+          --enable-mediacodec \
+          --enable-decoder=h264_mediacodec \
+          --enable-hwaccel=h264_mediacodec \
           --disable-debug \
-          --enable-lto \
-          --disable-neon-clobber-test \
-          --disable-programs \
-          --disable-postproc
-        
-        # If configure fails, show the config.log
-        if [ $? -ne 0 ]; then
-          echo "Configure failed. Contents of config.log:"
-          cat ffbuild/config.log
-          exit 1
-        fi
+          --enable-neon \
+          --enable-asm || {
+            echo "Configure failed. Contents of config.log:"
+            cat ffbuild/config.log
+            exit 1
+          }
 
-    - name: Build FFmpeg
-      run: |
         make -j$(nproc)
         make install
 
