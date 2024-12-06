@@ -1,4 +1,4 @@
-name: Build FFmpeg Android Libraries
+name: Build FFmpeg Android
 
 on:
   push:
@@ -7,83 +7,72 @@ on:
     branches: [ master ]
   workflow_dispatch:
 
-env:
-  NDK_VERSION: 26.2.11394342
-  API_LEVEL: 21
-
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [arm64-v8a, armeabi-v7a, x86, x86_64]
-        include:
-          - arch: arm64-v8a
-            cpu: armv8-a
-            cross_prefix: aarch64-linux-android-
-            cc_prefix: aarch64-linux-android
-            arch_flag: aarch64
-          - arch: armeabi-v7a
-            cpu: armv7-a
-            cross_prefix: arm-linux-androideabi-
-            cc_prefix: armv7a-linux-androideabi
-            arch_flag: arm
-          - arch: x86
-            cpu: i686
-            cross_prefix: i686-linux-android-
-            cc_prefix: i686-linux-android
-            arch_flag: x86
-          - arch: x86_64
-            cpu: x86-64
-            cross_prefix: x86_64-linux-android-
-            cc_prefix: x86_64-linux-android
-            arch_flag: x86_64
+    
+    env:
+      NDK_VERSION: 26.2.11394342
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+        
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
 
-    - name: Setup Android SDK and NDK
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Cache NDK
+      id: cache-ndk
+      uses: actions/cache@v3
+      with:
+        path: ${ANDROID_SDK_ROOT}/ndk/${{ env.NDK_VERSION }}
+        key: ${{ runner.os }}-ndk-${{ env.NDK_VERSION }}
+
+    - name: Install Android NDK
+      if: steps.cache-ndk.outputs.cache-hit != 'true'
+      run: |
+        echo "y" | sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
+
+    - name: Setup build environment
       run: |
         sudo apt-get update
         sudo apt-get install -y pkg-config
-        wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
-        unzip commandlinetools-linux-9477386_latest.zip
-        mkdir -p android-sdk/cmdline-tools
-        mv cmdline-tools android-sdk/cmdline-tools/latest
-        export ANDROID_SDK_ROOT=$PWD/android-sdk
-        export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
-        yes | sdkmanager --licenses
-        sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
-        echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-        echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" >> $GITHUB_ENV
-
-    - name: Set up toolchain
-      run: |
-        export TOOLCHAIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64
-        echo "TOOLCHAIN=$TOOLCHAIN" >> $GITHUB_ENV
-        echo "PATH=$TOOLCHAIN/bin:$PATH" >> $GITHUB_ENV
 
     - name: Configure FFmpeg
       run: |
-        export PATH=$TOOLCHAIN/bin:$PATH
+        export NDK_PATH=${ANDROID_SDK_ROOT}/ndk/${{ env.NDK_VERSION }}
+        export TOOLCHAIN=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64
+        export SYSROOT=$TOOLCHAIN/sysroot
+        export PREFIX=$GITHUB_WORKSPACE/prebuilt/android-arm64/ffmpeg
+        
+        mkdir -p $PREFIX
+        
         ./configure \
-          --cross-prefix=${{ matrix.cross_prefix }} \
-          --sysroot=$TOOLCHAIN/sysroot \
-          --prefix=$(pwd)/android-build/${{ matrix.arch }} \
-          --pkg-config=pkg-config \
+          --cross-prefix=aarch64-linux-android- \
+          --sysroot=$SYSROOT \
+          --prefix=$PREFIX \
+          --pkg-config=$(which pkg-config) \
           --enable-version3 \
-          --arch=${{ matrix.arch_flag }} \
-          --cpu=${{ matrix.cpu }} \
+          --arch=aarch64 \
+          --cpu=armv8-a \
           --target-os=android \
           --enable-neon \
           --enable-asm \
           --enable-inline-asm \
-          --cc=$TOOLCHAIN/bin/${{ matrix.cc_prefix }}${{ env.API_LEVEL }}-clang \
-          --cxx=$TOOLCHAIN/bin/${{ matrix.cc_prefix }}${{ env.API_LEVEL }}-clang++ \
           --ar=$TOOLCHAIN/bin/llvm-ar \
+          --cc=$TOOLCHAIN/bin/aarch64-linux-android21-clang \
+          --cxx=$TOOLCHAIN/bin/aarch64-linux-android21-clang++ \
           --ranlib=$TOOLCHAIN/bin/llvm-ranlib \
           --strip=$TOOLCHAIN/bin/llvm-strip \
           --nm=$TOOLCHAIN/bin/llvm-nm \
+          --extra-libs="-L$GITHUB_WORKSPACE/prebuilt/android-arm64/cpu-features/lib -lndk_compat" \
           --disable-autodetect \
           --enable-cross-compile \
           --enable-pic \
@@ -97,36 +86,21 @@ jobs:
           --disable-outdev=fbdev \
           --disable-indev=fbdev \
           --enable-small \
+          --disable-xmm-clobber-test \
           --disable-debug \
           --enable-lto \
           --disable-neon-clobber-test \
           --disable-programs \
-          --disable-postproc \
-          --enable-protocol=http \
-          --enable-protocol=https \
-          --enable-openssl \
-          --enable-network
+          --disable-postproc
 
     - name: Build FFmpeg
       run: |
-        export PATH=$TOOLCHAIN/bin:$PATH
         make -j$(nproc)
         make install
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: ffmpeg-android-libs-${{ matrix.arch }}
-        path: android-build/${{ matrix.arch }}/lib/*.so
-
-    - name: Create Release
-      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-      uses: softprops/action-gh-release@v1
-      with:
-        files: android-build/${{ matrix.arch }}/lib/*.so
-        tag_name: v${{ github.run_number }}
-        name: Release ${{ github.run_number }}
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        name: ffmpeg-android-arm64
+        path: prebuilt/android-arm64/ffmpeg
+        if-no-files-found: error
