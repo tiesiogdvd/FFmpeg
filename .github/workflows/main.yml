@@ -65,6 +65,11 @@ jobs:
           pkg-config \
           yasm
     
+    - name: Install gas-preprocessor
+      run: |
+        curl -L https://github.com/FFmpeg/gas-preprocessor/raw/master/gas-preprocessor.pl -o /usr/local/bin/gas-preprocessor.pl
+        chmod +x /usr/local/bin/gas-preprocessor.pl
+
     - name: Create build directory
       run: mkdir -p ${{ env.BUILD_DIR }}
     
@@ -83,7 +88,7 @@ jobs:
           --cxx=${{ matrix.target }}${{ matrix.api }}-clang++ \
           --ld=${{ matrix.target }}${{ matrix.api }}-clang \
           --ar=${{ matrix.target }}-ar \
-          --as=${{ matrix.target }}-as \
+          --as=gas-preprocessor.pl \
           --strip=${{ matrix.target }}-strip \
           --ranlib=${{ matrix.target }}-ranlib \
           --pkg-config=pkg-config \
