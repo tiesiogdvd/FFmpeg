@@ -17,7 +17,23 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [armeabi-v7a, arm64-v8a, x86, x86_64]
+        include:
+          - arch: armeabi-v7a
+            cpu: armv7-a
+            target: armv7a-linux-androideabi
+            api: 21
+          - arch: arm64-v8a
+            cpu: armv8-a
+            target: aarch64-linux-android
+            api: 21
+          - arch: x86
+            cpu: i686
+            target: i686-linux-android
+            api: 21
+          - arch: x86_64
+            cpu: x86_64
+            target: x86_64-linux-android
+            api: 21
         
     steps:
     - uses: actions/checkout@v3
@@ -55,21 +71,33 @@ jobs:
     - name: Configure FFmpeg
       working-directory: ${{ env.BUILD_DIR }}
       run: |
+        export PATH=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
         ../configure \
+          --prefix=$(pwd)/android/${{ matrix.arch }} \
           --enable-shared \
           --enable-cross-compile \
-          --cross-prefix=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/ \
           --target-os=android \
-          --arch=${{ matrix.arch }} \
+          --arch=${{ matrix.cpu }} \
+          --cpu=${{ matrix.cpu }} \
+          --cc=${{ matrix.target }}${{ matrix.api }}-clang \
+          --cxx=${{ matrix.target }}${{ matrix.api }}-clang++ \
+          --ld=${{ matrix.target }}${{ matrix.api }}-clang \
+          --ar=${{ matrix.target }}-ar \
+          --as=${{ matrix.target }}-as \
+          --strip=${{ matrix.target }}-strip \
+          --ranlib=${{ matrix.target }}-ranlib \
+          --pkg-config=pkg-config \
           --sysroot=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot \
-          --extra-cflags="-fPIC -DANDROID" \
+          --extra-cflags="-fPIC -DANDROID -D__ANDROID_API__=${{ matrix.api }}" \
+          --extra-ldflags="-L$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${{ matrix.target }}/${{ matrix.api }}" \
           --disable-static \
           --disable-doc \
           --disable-programs \
+          --disable-stripping \
           --enable-jni \
           --enable-mediacodec \
           --enable-decoder=h264_mediacodec \
-          --prefix=$(pwd)/android/${{ matrix.arch }}
+          --enable-neon
     
     - name: Build FFmpeg
       working-directory: ${{ env.BUILD_DIR }}
