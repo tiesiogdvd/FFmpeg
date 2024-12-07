@@ -1,4 +1,4 @@
-name: Build FFmpeg Android Libraries
+name: Build FFmpeg Android Audio Libraries
 
 on:
   push:
@@ -18,34 +18,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - arch: armeabi-v7a
-            cpu: armv7-a
-            target: armv7a-linux-androideabi
-            api: 21
           - arch: arm64-v8a
-            cpu: armv8-a
             target: aarch64-linux-android
-            api: 21
-          - arch: x86
-            cpu: i686
-            target: i686-linux-android
-            api: 21
-          - arch: x86_64
-            cpu: x86_64
-            target: x86_64-linux-android
             api: 21
         
     steps:
     - uses: actions/checkout@v3
-    
-    - name: Set up JDK
-      uses: actions/setup-java@v3
-      with:
-        distribution: 'temurin'
-        java-version: '17'
-    
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
     
     - name: Install Android NDK
       run: |
@@ -63,13 +41,9 @@ jobs:
           git \
           libtool \
           pkg-config \
+          nasm \
           yasm
     
-    - name: Install gas-preprocessor
-      run: |
-        curl -L https://github.com/FFmpeg/gas-preprocessor/raw/master/gas-preprocessor.pl -o /usr/local/bin/gas-preprocessor.pl
-        chmod +x /usr/local/bin/gas-preprocessor.pl
-
     - name: Create build directory
       run: mkdir -p ${{ env.BUILD_DIR }}
     
@@ -79,30 +53,44 @@ jobs:
         export PATH=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
         ../configure \
           --prefix=$(pwd)/android/${{ matrix.arch }} \
-          --enable-shared \
           --enable-cross-compile \
           --target-os=android \
-          --arch=${{ matrix.cpu }} \
-          --cpu=${{ matrix.cpu }} \
+          --arch=aarch64 \
+          --cpu=armv8-a \
           --cc=${{ matrix.target }}${{ matrix.api }}-clang \
           --cxx=${{ matrix.target }}${{ matrix.api }}-clang++ \
-          --ld=${{ matrix.target }}${{ matrix.api }}-clang \
-          --ar=${{ matrix.target }}-ar \
-          --as=gas-preprocessor.pl \
-          --strip=${{ matrix.target }}-strip \
-          --ranlib=${{ matrix.target }}-ranlib \
+          --strip=llvm-strip \
+          --ranlib=llvm-ranlib \
+          --ar=llvm-ar \
+          --nm=llvm-nm \
           --pkg-config=pkg-config \
           --sysroot=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot \
           --extra-cflags="-fPIC -DANDROID -D__ANDROID_API__=${{ matrix.api }}" \
-          --extra-ldflags="-L$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${{ matrix.target }}/${{ matrix.api }}" \
+          --enable-shared \
+          --enable-pic \
+          --enable-jni \
+          --enable-version3 \
+          --enable-neon \
+          --enable-pthreads \
           --disable-static \
           --disable-doc \
           --disable-programs \
-          --disable-stripping \
-          --enable-jni \
-          --enable-mediacodec \
-          --enable-decoder=h264_mediacodec \
-          --enable-neon
+          --disable-autodetect \
+          --disable-debug \
+          --disable-postproc \
+          --disable-encoders \
+          --disable-muxers \
+          --disable-videotoolbox \
+          --disable-vaapi \
+          --disable-vdpau \
+          --disable-audiotoolbox \
+          --disable-cuda \
+          --disable-cuvid \
+          --disable-nvenc \
+          --disable-nvdec \
+          --disable-v4l2-m2m \
+          --disable-outdev=fbdev \
+          --disable-indev=fbdev
     
     - name: Build FFmpeg
       working-directory: ${{ env.BUILD_DIR }}
@@ -116,15 +104,3 @@ jobs:
         name: ffmpeg-android-libs-${{ matrix.arch }}
         path: ${{ env.BUILD_DIR }}/android/${{ matrix.arch }}/lib/*.so
         if-no-files-found: error
-
-    - name: Create Release
-      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-      uses: softprops/action-gh-release@v1
-      with:
-        files: ${{ env.BUILD_DIR }}/android/${{ matrix.arch }}/lib/*.so
-        name: FFmpeg Android Libraries ${{ env.FFMPEG_VERSION }}
-        tag_name: v${{ env.FFMPEG_VERSION }}-android-${{ matrix.arch }}
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
